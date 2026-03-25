@@ -1,0 +1,375 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>江海大-摆动导杆机构3D仿真</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <style>
+        body { margin: 0; overflow: hidden; background-color: #f3f4f6; }
+        canvas { display: block; }
+        .ui-overlay {
+            position: absolute;
+            top: 20px;
+            left: 20px;
+            pointer-events: none;
+        }
+        .ui-overlay > * {
+            pointer-events: auto; /* 允许点击 overlay 内部元素而不穿透 */
+        }
+        .controls {
+            position: absolute;
+            bottom: 20px;
+            left: 50%;
+            transform: translateX(-50%);
+            background: rgba(255, 255, 255, 0.85);
+            backdrop-filter: blur(8px);
+            padding: 1.2rem;
+            border-radius: 1rem;
+            display: flex;
+            gap: 1.2rem;
+            pointer-events: auto;
+            border: 1px solid rgba(209, 213, 219, 0.5);
+            box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.1);
+            flex-wrap: wrap;
+            justify-content: center;
+        }
+        input[type="range"] {
+            accent-color: #3b82f6;
+        }
+    </style>
+</head>
+<body>
+
+    <div class="ui-overlay text-slate-800">
+        <h1 class="text-2xl font-bold">江海大-摆动导杆机构3D仿真</h1>
+        <p class="text-slate-500">运动学分析：速度合成定理验证</p>
+        <div class="mt-4 font-mono text-sm bg-white/70 p-3 rounded border border-slate-200 shadow-sm space-y-1">
+            <div class="flex items-center gap-2 font-bold mb-2">速度合成定理：v<sub>a</sub> = v<sub>e</sub> + v<sub>r</sub></div>
+            <div class="flex items-center gap-2"><div class="w-3 h-3 bg-red-500 rounded-full"></div> 绝对速度 v<sub>a</sub> (滑块)</div>
+            <div class="flex items-center gap-2"><div class="w-3 h-3 bg-blue-600 rounded-full"></div> 牵连速度 v<sub>e</sub> (牵连点)</div>
+            <div class="flex items-center gap-2"><div class="w-3 h-3 bg-cyan-400 rounded-full"></div> 青色标记：牵连点 (导杆上的重合点)</div>
+            <hr class="border-slate-300 my-1">
+            <div>θ (曲柄角): <span id="thetaVal">0</span>°</div>
+            <div>φ (摆角): <span id="phiVal">0</span>°</div>
+            <div class="text-blue-600 mt-1 font-bold">视角模式: <span id="viewLabel">全局视角</span></div>
+        </div>
+    </div>
+
+    <div class="controls">
+        <div class="flex flex-col">
+            <label class="text-xs text-slate-600 font-semibold mb-1">转动速度</label>
+            <input type="range" id="speed" min="0" max="5" step="0.1" value="1.5">
+        </div>
+        <div class="flex flex-col">
+            <label class="text-xs text-slate-600 font-semibold mb-1">曲柄长度 (r)</label>
+            <input type="range" id="crankR" min="2" max="8" step="0.1" value="5">
+        </div>
+        <div class="flex flex-col">
+            <label class="text-xs text-slate-600 font-semibold mb-1">中心距 (h)</label>
+            <input type="range" id="distH" min="10" max="20" step="0.1" value="12">
+        </div>
+        <div class="flex gap-2 self-end">
+            <button id="toggleView" class="px-3 py-1 bg-blue-600 hover:bg-blue-500 text-white text-xs rounded transition-colors shadow-sm">切换视角</button>
+            <button id="clearTrace" class="px-3 py-1 bg-amber-500 hover:bg-amber-400 text-white text-xs rounded transition-colors shadow-sm">清除轨迹</button>
+            <button id="resetView" class="px-3 py-1 bg-slate-700 hover:bg-black text-white text-xs rounded transition-colors shadow-sm">重置相机</button>
+        </div>
+    </div>
+
+    <script>
+        let scene, camera, renderer;
+        let crankGroup, rockerGroup, slider;
+        let pinO, pinO1, coincidentPoint;
+        let vAArrow, vEArrow;
+        let theta = 0;
+        let isMouseDown = false;
+        let rotX = 0, rotY = 0; 
+        let isRockerView = false;
+        let rockerZoomScale = 1.0; 
+
+        let sliderTracePoints = [];
+        let rockerTracePoints = [];
+        let sliderTraceLine, rockerTraceLine;
+        const MAX_TRACE_POINTS = 300;
+
+        const worldGroup = new THREE.Group();
+
+        function init() {
+            scene = new THREE.Scene();
+            scene.background = new THREE.Color(0xf3f4f6);
+
+            camera = new THREE.PerspectiveCamera(45, window.innerWidth / window.innerHeight, 0.1, 1000);
+            camera.position.set(0, 0, 50); 
+
+            renderer = new THREE.WebGLRenderer({ antialias: true });
+            renderer.setSize(window.innerWidth, window.innerHeight);
+            renderer.shadowMap.enabled = true;
+            document.body.appendChild(renderer.domElement);
+
+            const ambientLight = new THREE.AmbientLight(0xffffff, 0.8);
+            scene.add(ambientLight);
+            const dirLight = new THREE.DirectionalLight(0xffffff, 0.6);
+            dirLight.position.set(20, 30, 20);
+            scene.add(dirLight);
+
+            createEnvironment();
+            createMechanism();
+            createVelocityArrows();
+            createTraceLines(); 
+            
+            scene.add(worldGroup);
+
+            window.addEventListener('resize', onWindowResize);
+            
+            document.addEventListener('mousedown', (e) => {
+                const controls = document.querySelector('.controls');
+                const overlay = document.querySelector('.ui-overlay');
+                if (controls.contains(e.target) || overlay.contains(e.target)) return;
+                isMouseDown = true;
+            });
+            
+            document.addEventListener('mouseup', () => isMouseDown = false);
+            document.addEventListener('mousemove', (e) => {
+                if (isMouseDown && !isRockerView) {
+                    rotY += e.movementX * 0.005;
+                    rotX += e.movementY * 0.005;
+                }
+            });
+            
+            document.addEventListener('wheel', (e) => {
+                if (!isRockerView) {
+                    camera.position.z = Math.max(15, Math.min(camera.position.z + e.deltaY * 0.05, 150));
+                } else {
+                    rockerZoomScale += e.deltaY * 0.001;
+                    rockerZoomScale = Math.max(0.4, Math.min(rockerZoomScale, 4.0));
+                }
+            });
+
+            document.getElementById('resetView').onclick = () => { 
+                rotX = 0; rotY = 0; 
+                isRockerView = false;
+                rockerZoomScale = 1.0;
+                document.getElementById('viewLabel').innerText = "全局视角";
+                camera.position.set(0, 0, 50); 
+                camera.up.set(0, 1, 0);
+                camera.lookAt(0, 0, 0);
+                worldGroup.rotation.set(0, 0, 0);
+            };
+
+            document.getElementById('clearTrace').onclick = () => {
+                sliderTracePoints = [];
+                rockerTracePoints = [];
+                updateLineGeometry(sliderTraceLine, sliderTracePoints);
+                updateLineGeometry(rockerTraceLine, rockerTracePoints);
+            };
+
+            const toggleBtn = document.getElementById('toggleView');
+            toggleBtn.onclick = () => {
+                isRockerView = !isRockerView;
+                document.getElementById('viewLabel').innerText = isRockerView ? "摆杆固定视角" : "全局视角";
+                if (!isRockerView) {
+                    camera.up.set(0, 1, 0);
+                    camera.lookAt(0, 0, 0);
+                }
+            };
+
+            animate();
+        }
+
+        function createEnvironment() {
+            const gridColorCenter = 0xd1d5db;
+            const gridColorLines = 0xe5e7eb;
+
+            // 1. 地面网格 (XZ平面)
+            const floorGrid = new THREE.GridHelper(200, 40, gridColorCenter, gridColorLines);
+            floorGrid.position.y = -20;
+            scene.add(floorGrid);
+
+            // 2. 背景墙网格 (XY平面)
+            const wallGrid = new THREE.GridHelper(200, 40, gridColorCenter, gridColorLines);
+            wallGrid.rotation.x = Math.PI / 2; 
+            wallGrid.position.y = 80; 
+            wallGrid.position.z = -60; 
+            scene.add(wallGrid);
+
+            const factoryLines = new THREE.Group();
+            const lineMat = new THREE.LineBasicMaterial({ color: 0xcfd3d7 });
+            const colGeom = new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(0, -20, 0), new THREE.Vector3(0, 180, 0)]);
+            const pos = [[-100, -60], [100, -60], [0, -70]];
+            pos.forEach(p => {
+                const l = new THREE.Line(colGeom, lineMat);
+                l.position.set(p[0], 0, p[1]);
+                factoryLines.add(l);
+            });
+            scene.add(factoryLines);
+        }
+
+        function createMechanism() {
+            const metalMat = new THREE.MeshStandardMaterial({ color: 0x94a3b8, roughness: 0.3, metalness: 0.8 });
+            const crankMat = new THREE.MeshStandardMaterial({ color: 0x1e293b, roughness: 0.2, metalness: 0.9 });
+            const rockerMat = new THREE.MeshStandardMaterial({ color: 0x3b82f6, roughness: 0.4, metalness: 0.5, transparent: true, opacity: 0.6 });
+            
+            const sliderMat = new THREE.MeshStandardMaterial({ 
+                color: 0xef4444, 
+                roughness: 0.4, 
+                metalness: 0.2,
+                transparent: true,
+                opacity: 0.6 
+            });
+
+            pinO = new THREE.Mesh(new THREE.CylinderGeometry(0.6, 0.6, 4, 32), metalMat);
+            pinO.rotation.x = Math.PI / 2;
+            pinO.position.z = 1;
+            worldGroup.add(pinO);
+
+            crankGroup = new THREE.Group();
+            crankGroup.position.z = 2.5; 
+            
+            const crankBody = new THREE.Mesh(new THREE.BoxGeometry(0.24, 1, 0.15), crankMat);
+            crankBody.geometry.translate(0, 0.5, 0); 
+            crankBody.name = "body";
+            crankGroup.add(crankBody);
+            worldGroup.add(crankGroup);
+
+            pinO1 = new THREE.Mesh(new THREE.CylinderGeometry(0.6, 0.6, 4, 32), metalMat);
+            pinO1.rotation.x = Math.PI / 2;
+            pinO1.position.z = 1;
+            worldGroup.add(pinO1);
+
+            rockerGroup = new THREE.Group();
+            rockerGroup.position.z = 1.5; 
+            
+            const rockerBodyGeom = new THREE.BoxGeometry(1.2, 50, 0.6);
+            rockerBodyGeom.translate(0, 5, 0); 
+            const rockerMesh = new THREE.Mesh(rockerBodyGeom, rockerMat);
+            rockerGroup.add(rockerMesh);
+            worldGroup.add(rockerGroup);
+
+            slider = new THREE.Mesh(new THREE.BoxGeometry(2, 2.5, 1.2), sliderMat);
+            slider.position.z = 1.5; 
+            worldGroup.add(slider);
+
+            const markerGeom = new THREE.SphereGeometry(0.35, 16, 16);
+            coincidentPoint = new THREE.Mesh(markerGeom, new THREE.MeshBasicMaterial({ color: 0x00ffff }));
+            worldGroup.add(coincidentPoint);
+        }
+
+        function createVelocityArrows() {
+            vAArrow = new THREE.ArrowHelper(new THREE.Vector3(1,0,0), new THREE.Vector3(0,0,0), 0, 0xef4444, 1.5, 0.6);
+            vEArrow = new THREE.ArrowHelper(new THREE.Vector3(1,0,0), new THREE.Vector3(0,0,0), 0, 0x2563eb, 1.5, 0.6);
+            worldGroup.add(vAArrow);
+            worldGroup.add(vEArrow);
+        }
+
+        function createTraceLines() {
+            const sliderTraceMat = new THREE.LineBasicMaterial({ color: 0xef4444, transparent: true, opacity: 0.4 });
+            const rockerTraceMat = new THREE.LineBasicMaterial({ color: 0x3b82f6, transparent: true, opacity: 0.4 });
+            sliderTraceLine = new THREE.Line(new THREE.BufferGeometry(), sliderTraceMat);
+            rockerTraceLine = new THREE.Line(new THREE.BufferGeometry(), rockerTraceMat);
+            worldGroup.add(sliderTraceLine);
+            worldGroup.add(rockerTraceLine);
+        }
+
+        function updateLineGeometry(line, points) {
+            if (!line || points.length < 2) return;
+            line.geometry.setFromPoints(points);
+        }
+
+        function updateMechanism() {
+            const r = parseFloat(document.getElementById('crankR').value);
+            const h = parseFloat(document.getElementById('distH').value);
+            const speed = parseFloat(document.getElementById('speed').value);
+
+            theta += speed * 0.02;
+
+            pinO1.position.y = -h;
+            rockerGroup.position.y = -h;
+
+            crankGroup.rotation.z = theta - Math.PI / 2;
+            crankGroup.getObjectByName("body").scale.y = r;
+
+            const ax = r * Math.cos(theta);
+            const ay = r * Math.sin(theta);
+            const phi = Math.atan2(ax, ay + h);
+
+            rockerGroup.rotation.z = -phi;
+            slider.position.set(ax, ay, 1.5);
+            slider.rotation.z = -phi;
+            coincidentPoint.position.set(ax, ay, 1.5);
+
+            // --- 速度分析 ---
+            const omega0 = speed * 0.02; 
+            const va_dir = new THREE.Vector3(-Math.sin(theta), Math.cos(theta), 0);
+            const va_mag = omega0 * r;
+            const va_vec = va_dir.clone().multiplyScalar(va_mag);
+
+            const rocker_normal = new THREE.Vector3(-(ay + h), ax, 0).normalize();
+            const projection = va_vec.dot(rocker_normal);
+            const ve_vec = rocker_normal.clone().multiplyScalar(projection);
+
+            const arrowScale = 60; 
+            const headLen = 2.5;
+            const headWidth = 1.0;
+            
+            vAArrow.position.set(ax, ay, 3.5);
+            vAArrow.setDirection(va_dir);
+            vAArrow.setLength(va_mag * arrowScale, headLen, headWidth);
+
+            vEArrow.position.set(ax, ay, 3.5);
+            if (Math.abs(projection) > 0.0001) {
+                vEArrow.visible = true;
+                vEArrow.setDirection(rocker_normal.clone().multiplyScalar(Math.sign(projection)));
+                vEArrow.setLength(Math.abs(projection) * arrowScale, headLen, headWidth);
+            } else {
+                vEArrow.visible = false;
+            }
+
+            // 轨迹记录
+            sliderTracePoints.push(new THREE.Vector3(ax, ay, 1.5));
+            if (sliderTracePoints.length > MAX_TRACE_POINTS) sliderTracePoints.shift();
+            updateLineGeometry(sliderTraceLine, sliderTracePoints);
+
+            const rockerTipWorld = rockerGroup.localToWorld(new THREE.Vector3(0, 30, 0));
+            rockerTipWorld.z = 1.5; 
+            rockerTracePoints.push(rockerTipWorld);
+            if (rockerTracePoints.length > MAX_TRACE_POINTS) rockerTracePoints.shift();
+            updateLineGeometry(rockerTraceLine, rockerTracePoints);
+
+            document.getElementById('thetaVal').innerText = Math.floor((theta * 180 / Math.PI) % 360);
+            document.getElementById('phiVal').innerText = Math.floor(phi * 180 / Math.PI);
+
+            if (isRockerView) {
+                const localCamPos = new THREE.Vector3(0, 15 * rockerZoomScale, 25 * rockerZoomScale);
+                const worldCamPos = rockerGroup.localToWorld(localCamPos);
+                camera.position.lerp(worldCamPos, 0.1);
+                camera.lookAt(new THREE.Vector3(ax, ay, 1.5));
+                camera.up.copy(new THREE.Vector3(0, 1, 0).applyQuaternion(rockerGroup.quaternion));
+            }
+        }
+
+        function animate() {
+            requestAnimationFrame(animate);
+            updateMechanism();
+
+            if (!isRockerView) {
+                worldGroup.rotation.x += (rotX - worldGroup.rotation.x) * 0.1;
+                worldGroup.rotation.y += (rotY - worldGroup.rotation.y) * 0.1;
+            } else {
+                worldGroup.rotation.x *= 0.9;
+                worldGroup.rotation.y *= 0.9;
+            }
+
+            renderer.render(scene, camera);
+        }
+
+        function onWindowResize() {
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+        }
+
+        window.onload = init;
+    </script>
+</body>
+</html>

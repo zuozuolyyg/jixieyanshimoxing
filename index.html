@@ -1,0 +1,128 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>江海大 - 机械仿真综合教学平台</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <style>
+        body { background-color: #f3f4f6; font-family: 'Segoe UI', 'Microsoft YaHei', sans-serif; }
+        .module-card {
+            transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+        }
+        .module-card:hover {
+            transform: translateY(-5px);
+            box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.1), 0 10px 10px -5px rgba(0, 0, 0, 0.04);
+        }
+        /* 隐藏滚动条但保留滚动功能 */
+        .no-scrollbar::-webkit-scrollbar { display: none; }
+        .no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
+    </style>
+</head>
+<body class="h-screen flex flex-col overflow-hidden">
+
+    <header class="h-16 bg-white shadow-sm flex items-center justify-between px-6 z-20 shrink-0 border-b border-gray-200">
+        <div class="flex items-center gap-4">
+            <div class="w-10 h-10 bg-blue-600 rounded-lg flex items-center justify-center text-white shadow-lg shadow-blue-500/30">
+                <i class="fa-solid fa-graduation-cap text-xl"></i>
+            </div>
+            <div>
+                <h1 class="text-xl font-bold text-gray-800 leading-tight">江海大 <span class="text-blue-600 font-black">机械仿真综合平台</span></h1>
+            </div>
+        </div>
+
+        <button id="btn-back" onclick="returnToHome()" class="hidden px-5 py-2 bg-gray-100 hover:bg-gray-200 text-gray-700 rounded-lg font-bold transition-colors flex items-center gap-2 active:scale-95 shadow-sm border border-gray-200">
+            <i class="fa-solid fa-arrow-left"></i> 返回平台主页
+        </button>
+    </header>
+
+    <main class="flex-1 relative bg-gray-50">
+        
+        <div id="view-home" class="absolute inset-0 p-8 overflow-y-auto no-scrollbar">
+            <div class="max-w-6xl mx-auto">
+                <div class="mb-8">
+                    <h2 class="text-2xl font-bold text-gray-800">请选择仿真实验模块</h2>
+                    <p class="text-gray-500 mt-2">点击下方卡片进入对应的三维运动学仿真环境。</p>
+                </div>
+
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+                    
+                    <div onclick="openModule('江海大-四连杆可调整模型.html')" class="module-card bg-white rounded-2xl p-6 cursor-pointer border border-gray-100 group relative overflow-hidden">
+                        <div class="absolute top-0 right-0 w-24 h-24 bg-teal-50 rounded-bl-full -z-10 transition-transform group-hover:scale-110"></div>
+                        <div class="w-12 h-12 bg-teal-100 text-teal-600 rounded-xl flex items-center justify-center text-2xl mb-4">
+                            <i class="fa-solid fa-project-diagram"></i>
+                        </div>
+                        <h3 class="text-xl font-bold text-gray-800 mb-2 group-hover:text-teal-600 transition-colors">四连杆可调整模型</h3>
+                        <p class="text-gray-500 text-sm leading-relaxed">自由调节曲柄、连杆、摇杆及机架参数，实时观察四连杆机构的运动轨迹与死点状态。</p>
+                    </div>
+
+                    <div onclick="openModule('江海大-点的合成运动-摇杆.html')" class="module-card bg-white rounded-2xl p-6 cursor-pointer border border-gray-100 group relative overflow-hidden">
+                        <div class="absolute top-0 right-0 w-24 h-24 bg-blue-50 rounded-bl-full -z-10 transition-transform group-hover:scale-110"></div>
+                        <div class="w-12 h-12 bg-blue-100 text-blue-600 rounded-xl flex items-center justify-center text-2xl mb-4">
+                            <i class="fa-solid fa-arrows-spin"></i>
+                        </div>
+                        <h3 class="text-xl font-bold text-gray-800 mb-2 group-hover:text-blue-600 transition-colors">摆动导杆机构 (速度合成)</h3>
+                        <p class="text-gray-500 text-sm leading-relaxed">运动学分析核心：直观验证速度合成定理，观察滑块绝对速度与牵连速度的动态变化关系。</p>
+                    </div>
+
+                    <div onclick="openModule('江海大-机械臂仿真平台.html')" class="module-card bg-white rounded-2xl p-6 cursor-pointer border border-gray-100 group relative overflow-hidden">
+                        <div class="absolute top-0 right-0 w-24 h-24 bg-orange-50 rounded-bl-full -z-10 transition-transform group-hover:scale-110"></div>
+                        <div class="w-12 h-12 bg-orange-100 text-orange-600 rounded-xl flex items-center justify-center text-2xl mb-4">
+                            <i class="fa-solid fa-robot"></i>
+                        </div>
+                        <h3 class="text-xl font-bold text-gray-800 mb-2 group-hover:text-orange-600 transition-colors">机械臂仿真平台</h3>
+                        <p class="text-gray-500 text-sm leading-relaxed">PRO 级三轴机械臂控制台。支持手动示教控制、夹爪抓取物理模拟、端点力矩分析及动作录制回放。</p>
+                    </div>
+
+                    <div onclick="openModule('江海大-曲柄连杆仿真模型.html')" class="module-card bg-white rounded-2xl p-6 cursor-pointer border border-gray-100 group relative overflow-hidden">
+                        <div class="absolute top-0 right-0 w-24 h-24 bg-rose-50 rounded-bl-full -z-10 transition-transform group-hover:scale-110"></div>
+                        <div class="w-12 h-12 bg-rose-100 text-rose-600 rounded-xl flex items-center justify-center text-2xl mb-4">
+                            <i class="fa-solid fa-cogs"></i>
+                        </div>
+                        <h3 class="text-xl font-bold text-gray-800 mb-2 group-hover:text-rose-600 transition-colors">曲柄连杆仿真模型</h3>
+                        <p class="text-gray-500 text-sm leading-relaxed">调节曲轴转速与连杆长度，深度观察活塞在气缸内的往复直线运动特性与几何约束关系。</p>
+                    </div>
+
+                </div>
+            </div>
+        </div>
+
+        <iframe id="sim-frame" class="hidden w-full h-full border-none bg-white" src=""></iframe>
+
+    </main>
+
+<script>
+        const viewHome = document.getElementById('view-home');
+        const simFrame = document.getElementById('sim-frame');
+        const btnBack = document.getElementById('btn-back');
+
+        // 打开对应的仿真页面
+        function openModule(fileName) {
+            // 1. 先显示 iframe 和返回按钮，隐藏主页
+            viewHome.classList.add('hidden');
+            simFrame.classList.remove('hidden');
+            btnBack.classList.remove('hidden');
+            
+            // 2. 【核心修复】：强制让浏览器刷新一下布局尺寸
+            simFrame.getBoundingClientRect();
+
+            // 3. 稍微延迟 50 毫秒加载子页面，确保子页面获取到的 window.innerWidth 不是 0
+            setTimeout(() => {
+                simFrame.src = fileName;
+            }, 50);
+        }
+
+        // 返回主页
+        function returnToHome() {
+            // 清除 iframe 源以停止后台渲染，释放内存
+            simFrame.src = '';
+            
+            // 恢复 UI 状态
+            viewHome.classList.remove('hidden');
+            simFrame.classList.add('hidden');
+            btnBack.classList.add('hidden');
+        }
+    </script>
+</body>
+</html>

@@ -1,0 +1,507 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>江海大-四连杆可调整模型</title>
+
+    <!-- 预加载 Three.js，减少网络等待 -->
+    <link rel="preload" href="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js" as="script">
+    <link rel="preload" href="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js" as="script">
+
+    <style>
+        * { box-sizing: border-box; }
+        body { margin: 0; overflow: hidden; background-color: #f0f2f5; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; }
+
+        /* 预设背景色与场景一致，防止黑屏闪烁 */
+        #canvas-container {
+            width: 100vw;
+            height: 100vh;
+            display: block;
+            background-color: #f5f7fa;
+        }
+        #canvas-container canvas { display: block; }
+
+        /* 加载遮罩 */
+        #loading-overlay {
+            position: fixed;
+            inset: 0;
+            background: #f5f7fa;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            z-index: 100;
+            transition: opacity 0.4s ease;
+        }
+        #loading-overlay.fade-out { opacity: 0; pointer-events: none; }
+        .loader-ring {
+            width: 44px; height: 44px;
+            border: 4px solid #e0e0e0;
+            border-top-color: #74b9ff;
+            border-radius: 50%;
+            animation: spin 0.8s linear infinite;
+            margin-bottom: 14px;
+        }
+        @keyframes spin { to { transform: rotate(360deg); } }
+        .loader-text { font-size: 12px; color: #999; font-weight: 600; letter-spacing: 0.1em; }
+
+        /* 控制面板 */
+        #controls {
+            position: absolute;
+            top: 20px;
+            left: 20px;
+            width: 280px;
+            background: rgba(255, 255, 255, 0.95);
+            padding: 20px;
+            border-radius: 12px;
+            box-shadow: 0 4px 20px rgba(0,0,0,0.1);
+            border: 1px solid rgba(255,255,255,0.8);
+            max-height: 90vh;
+            overflow-y: auto;
+            z-index: 10;
+        }
+        .control-group {
+            margin-bottom: 12px;
+            padding-bottom: 12px;
+            border-bottom: 1px solid #eee;
+        }
+        .control-group:last-child { border-bottom: none; }
+        label {
+            display: flex;
+            justify-content: space-between;
+            margin-bottom: 5px;
+            color: #444;
+            font-size: 13px;
+            font-weight: 600;
+        }
+        input[type="range"] {
+            width: 100%;
+            cursor: pointer;
+            accent-color: #74b9ff;
+            height: 6px;
+            background: #e0e0e0;
+            border-radius: 3px;
+            appearance: none;
+        }
+        input[type="range"]::-webkit-slider-thumb {
+            -webkit-appearance: none;
+            height: 16px; width: 16px;
+            border-radius: 50%;
+            background: #74b9ff;
+            margin-top: -5px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.2);
+        }
+        input[type="range"]::-webkit-slider-runnable-track {
+            height: 6px;
+            background: #e0e0e0;
+            border-radius: 3px;
+        }
+        h1 {
+            margin: 0 0 15px 0;
+            font-size: 18px;
+            color: #2c3e50;
+            border-bottom: 2px solid #74b9ff;
+            padding-bottom: 8px;
+            display: inline-block;
+        }
+        .button-row { display: flex; gap: 10px; }
+        button {
+            flex: 1;
+            padding: 8px;
+            border: none;
+            border-radius: 6px;
+            cursor: pointer;
+            font-weight: 600;
+            transition: background 0.2s;
+            color: white;
+        }
+        #btn-pause { background-color: #fab1a0; }
+        #btn-pause:hover { background-color: #e17055; }
+        #btn-clear { background-color: #74b9ff; }
+        #btn-clear:hover { background-color: #0984e3; }
+        .status-ok { color: #00b894; font-size: 12px; }
+        .status-error { color: #d63031; font-size: 12px; font-weight: bold; }
+        .section-title {
+            font-size: 12px;
+            color: #888;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            margin-bottom: 8px;
+            margin-top: 5px;
+        }
+    </style>
+</head>
+<body>
+
+    <!-- 加载遮罩 -->
+    <div id="loading-overlay">
+        <div class="loader-ring"></div>
+        <div class="loader-text">正在初始化仿真引擎...</div>
+    </div>
+
+    <!-- 控制面板 -->
+    <div id="controls">
+        <h1>江海大-四连杆可调整模型</h1>
+
+        <div class="section-title">机构尺寸</div>
+        <div class="control-group">
+            <label>曲柄 (绿色) <span id="val-l1">5</span></label>
+            <input type="range" id="slider-l1" min="2" max="10" step="0.1" value="5">
+        </div>
+        <div class="control-group">
+            <label>连杆 (蓝色) <span id="val-l2">15</span></label>
+            <input type="range" id="slider-l2" min="5" max="25" step="0.1" value="15">
+        </div>
+        <div class="control-group">
+            <label>摇杆 (橙色) <span id="val-l3">10</span></label>
+            <input type="range" id="slider-l3" min="5" max="20" step="0.1" value="10">
+        </div>
+        <div class="control-group">
+            <label>机架 (两轴间距) <span id="val-l4">12</span></label>
+            <input type="range" id="slider-l4" min="5" max="20" step="0.1" value="12">
+        </div>
+
+        <div class="section-title">轨迹控制</div>
+        <div class="control-group">
+            <label>轨迹点位置 X <span id="val-tx">5</span></label>
+            <input type="range" id="slider-tx" min="-10" max="30" step="0.5" value="5">
+            <label style="margin-top:5px;">轨迹点位置 Y <span id="val-ty">4</span></label>
+            <input type="range" id="slider-ty" min="-10" max="10" step="0.5" value="4">
+        </div>
+
+        <div class="section-title">运行控制</div>
+        <div class="control-group">
+            <label>转速 <span id="val-speed">30</span></label>
+            <input type="range" id="slider-speed" min="0" max="120" value="30">
+        </div>
+        <div class="control-group">
+            <div id="status-msg" class="status-ok">状态: 正常运转</div>
+        </div>
+
+        <div class="button-row">
+            <button id="btn-pause" onclick="togglePause()">暂停</button>
+            <button id="btn-clear" onclick="clearTrail()">清除轨迹</button>
+        </div>
+    </div>
+
+    <div id="canvas-container"></div>
+
+    <!-- Three.js 放在 body 末尾，不阻塞 HTML 解析与首屏渲染 -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
+
+    <script>
+        let scene, camera, renderer, controls;
+        let pivotA, pivotD;
+        let link1, link2, link3;
+        let jointB, jointC;
+        let tracerPoint;
+        let trailLine;
+
+        const MAX_TRAIL_POINTS = 1000;
+        let trailPositions = new Float32Array(MAX_TRAIL_POINTS * 3);
+        let trailIndex = 0;
+        let trailGeometry;
+        let isPaused = false;
+
+        let params = {
+            l1: 5, l2: 15, l3: 10, l4: 12,
+            speed: 30, angle: 0,
+            traceX: 5, traceY: 4
+        };
+
+        const materials = {
+            pivot:   new THREE.MeshStandardMaterial({ color: 0x555555, roughness: 0.5 }),
+            link1:   new THREE.MeshStandardMaterial({ color: 0x55efc4, metalness: 0.1, roughness: 0.2 }),
+            link2:   new THREE.MeshStandardMaterial({ color: 0x74b9ff, metalness: 0.1, roughness: 0.2 }),
+            link3:   new THREE.MeshStandardMaterial({ color: 0xffaf40, metalness: 0.1, roughness: 0.2 }),
+            joint:   new THREE.MeshStandardMaterial({ color: 0xbdc3c7 }),
+            tracer:  new THREE.MeshBasicMaterial({ color: 0xff0000 }),
+            trail:   new THREE.LineBasicMaterial({ color: 0xff0000, linewidth: 2 })
+        };
+
+        function init() {
+            const container = document.getElementById('canvas-container');
+            const loadingOverlay = document.getElementById('loading-overlay');
+
+            scene = new THREE.Scene();
+            scene.background = new THREE.Color(0xf5f7fa);
+
+            camera = new THREE.PerspectiveCamera(45, container.clientWidth / container.clientHeight, 0.1, 1000);
+            camera.position.set(0, 0, 60);
+
+            renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: 'high-performance' });
+            renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+            renderer.setSize(container.clientWidth, container.clientHeight);
+            renderer.shadowMap.enabled = true;
+            renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+            container.appendChild(renderer.domElement);
+
+            // 初始化完成，淡出加载遮罩
+            loadingOverlay.classList.add('fade-out');
+            setTimeout(() => { loadingOverlay.style.display = 'none'; }, 450);
+
+            const ambi = new THREE.AmbientLight(0xffffff, 0.8);
+            scene.add(ambi);
+            const dir = new THREE.DirectionalLight(0xffffff, 0.5);
+            dir.position.set(10, 20, 30);
+            dir.castShadow = true;
+            dir.shadow.mapSize.width = 1024;
+            dir.shadow.mapSize.height = 1024;
+            scene.add(dir);
+
+            controls = new THREE.OrbitControls(camera, renderer.domElement);
+            controls.enableDamping = true;
+
+            const grid = new THREE.GridHelper(100, 100, 0xdcdde1, 0xeef2f3);
+            grid.rotation.x = Math.PI / 2;
+            scene.add(grid);
+
+            createMechanism();
+
+            trailGeometry = new THREE.BufferGeometry();
+            trailGeometry.setAttribute('position', new THREE.BufferAttribute(trailPositions, 3));
+            trailGeometry.setDrawRange(0, 0);
+            trailLine = new THREE.Line(trailGeometry, materials.trail);
+            scene.add(trailLine);
+
+            setupUI();
+            animate();
+
+            // ResizeObserver 精准响应尺寸变化
+            const ro = new ResizeObserver(() => {
+                const w = container.clientWidth;
+                const h = container.clientHeight;
+                if (w > 0 && h > 0) {
+                    camera.aspect = w / h;
+                    camera.updateProjectionMatrix();
+                    renderer.setSize(w, h);
+                }
+            });
+            ro.observe(container);
+        }
+
+        function createLinkMesh(length, material) {
+            const group = new THREE.Group();
+            const boxGeo = new THREE.BoxGeometry(length, 0.8, 0.5);
+            boxGeo.translate(length / 2, 0, 0);
+            const mesh = new THREE.Mesh(boxGeo, material);
+            mesh.castShadow = true;
+            group.add(mesh);
+
+            const endGeo = new THREE.CylinderGeometry(0.8, 0.8, 0.5, 32);
+            endGeo.rotateX(Math.PI / 2);
+            const end1 = new THREE.Mesh(endGeo, material);
+            const end2 = new THREE.Mesh(endGeo, material);
+            end2.position.x = length;
+            group.add(end1);
+            group.add(end2);
+
+            group.userData = { mesh, end2, length };
+            return group;
+        }
+
+        function createMechanism() {
+            const pivotGeo = new THREE.CylinderGeometry(1, 1, 2, 32);
+
+            pivotA = new THREE.Mesh(pivotGeo, materials.pivot);
+            pivotA.rotation.x = Math.PI / 2;
+            scene.add(pivotA);
+
+            pivotD = new THREE.Mesh(pivotGeo, materials.pivot);
+            pivotD.rotation.x = Math.PI / 2;
+            scene.add(pivotD);
+
+            link1 = createLinkMesh(params.l1, materials.link1);
+            scene.add(link1);
+            link2 = createLinkMesh(params.l2, materials.link2);
+            scene.add(link2);
+            link3 = createLinkMesh(params.l3, materials.link3);
+            scene.add(link3);
+
+            const jointGeo = new THREE.CylinderGeometry(0.7, 0.7, 2.2, 32);
+            jointB = new THREE.Mesh(jointGeo, materials.joint);
+            jointB.rotation.x = Math.PI / 2;
+            scene.add(jointB);
+
+            jointC = new THREE.Mesh(jointGeo, materials.joint);
+            jointC.rotation.x = Math.PI / 2;
+            scene.add(jointC);
+
+            const tracerGeo = new THREE.SphereGeometry(0.5, 32, 32);
+            tracerPoint = new THREE.Mesh(tracerGeo, materials.tracer);
+            link2.add(tracerPoint);
+            updateTracerLocalPos();
+        }
+
+        function updateLinkGeometry() {
+            updateSingleLink(link1, params.l1);
+            updateSingleLink(link2, params.l2);
+            updateSingleLink(link3, params.l3);
+            pivotD.position.set(params.l4, 0, 0);
+            updateTracerLocalPos();
+        }
+
+        function updateSingleLink(group, newLength) {
+            if (Math.abs(group.userData.length - newLength) < 0.01) return;
+            group.userData.mesh.geometry.dispose();
+            const newGeo = new THREE.BoxGeometry(newLength, 0.8, 0.5);
+            newGeo.translate(newLength / 2, 0, 0);
+            group.userData.mesh.geometry = newGeo;
+            group.userData.end2.position.x = newLength;
+            group.userData.length = newLength;
+        }
+
+        function updateTracerLocalPos() {
+            tracerPoint.position.set(params.traceX, params.traceY, 0.6);
+        }
+
+        function solveFourBar() {
+            const Dx = params.l4;
+            const Bx = Math.cos(params.angle) * params.l1;
+            const By = Math.sin(params.angle) * params.l1;
+            const distBD = Math.sqrt((Dx - Bx) ** 2 + By ** 2);
+
+            if (distBD > params.l2 + params.l3 || distBD < Math.abs(params.l2 - params.l3) || distBD === 0) {
+                return null;
+            }
+
+            const a = (params.l2 ** 2 - params.l3 ** 2 + distBD ** 2) / (2 * distBD);
+            const h = Math.sqrt(Math.max(0, params.l2 ** 2 - a ** 2));
+
+            const x2 = Bx + a * (Dx - Bx) / distBD;
+            const y2 = By + a * (-By) / distBD;
+
+            const Cx_1 = x2 + h * (-By) / distBD;
+            const Cy_1 = y2 - h * (Dx - Bx) / distBD;
+            const Cx_2 = x2 - h * (-By) / distBD;
+            const Cy_2 = y2 + h * (Dx - Bx) / distBD;
+
+            const Cx = Cy_2 > Cy_1 ? Cx_2 : Cx_1;
+            const Cy = Cy_2 > Cy_1 ? Cy_2 : Cy_1;
+
+            return { Bx, By, Cx, Cy, Dx, Dy: 0 };
+        }
+
+        window.togglePause = function () {
+            isPaused = !isPaused;
+            const btn = document.getElementById('btn-pause');
+            btn.innerText = isPaused ? "继续" : "暂停";
+            btn.style.backgroundColor = isPaused ? "#00b894" : "#fab1a0";
+        };
+
+        const FIXED_DELTA = 0.016;
+        function updatePhysics() {
+            const shouldMove = !isPaused && params.speed > 0;
+            let nextAngle = params.angle;
+            if (shouldMove) {
+                nextAngle += (params.speed * 2 * Math.PI / 60) * FIXED_DELTA;
+            }
+
+            const prevAngle = params.angle;
+            params.angle = nextAngle;
+            const sol = solveFourBar();
+
+            const statusEl = document.getElementById('status-msg');
+
+            if (sol) {
+                statusEl.innerText = isPaused ? "状态: 已暂停" : "状态: 正常运转";
+                statusEl.className = "status-ok";
+
+                link1.rotation.z = params.angle;
+
+                link2.position.set(sol.Bx, sol.By, 0.1);
+                const angle2 = Math.atan2(sol.Cy - sol.By, sol.Cx - sol.Bx);
+                link2.rotation.z = angle2;
+
+                link3.position.set(sol.Dx, sol.Dy, 0);
+                const angle3 = Math.atan2(sol.Cy - sol.Dy, sol.Cx - sol.Dx);
+                link3.rotation.z = angle3;
+
+                jointB.position.set(sol.Bx, sol.By, 0.2);
+                jointC.position.set(sol.Cx, sol.Cy, 0.2);
+
+                if (shouldMove) {
+                    const cos2 = Math.cos(angle2), sin2 = Math.sin(angle2);
+                    const Px = sol.Bx + (params.traceX * cos2 - params.traceY * sin2);
+                    const Py = sol.By + (params.traceX * sin2 + params.traceY * cos2);
+                    updateTrail(Px, Py);
+                }
+            } else {
+                params.angle = prevAngle;
+                statusEl.innerText = "状态: 机构死点/无法连接";
+                statusEl.className = "status-error";
+            }
+        }
+
+        function updateTrail(x, y) {
+            const positions = trailLine.geometry.attributes.position.array;
+            if (trailIndex < MAX_TRAIL_POINTS) {
+                positions[trailIndex * 3]     = x;
+                positions[trailIndex * 3 + 1] = y;
+                positions[trailIndex * 3 + 2] = 0;
+                trailIndex++;
+                trailLine.geometry.setDrawRange(0, trailIndex);
+            } else {
+                // 环形缓冲区（比逐帧移位性能好得多）
+                const tail = trailIndex % MAX_TRAIL_POINTS;
+                positions[tail * 3]     = x;
+                positions[tail * 3 + 1] = y;
+                positions[tail * 3 + 2] = 0;
+                trailIndex++;
+                trailLine.geometry.setDrawRange(0, MAX_TRAIL_POINTS);
+            }
+            trailLine.geometry.attributes.position.needsUpdate = true;
+        }
+
+        window.clearTrail = function () {
+            trailIndex = 0;
+            trailLine.geometry.setDrawRange(0, 0);
+        };
+
+        function setupUI() {
+            const bind = (id, paramKey, isGeometry = false) => {
+                const el = document.getElementById('slider-' + id);
+                const valEl = document.getElementById('val-' + id);
+                el.addEventListener('input', (e) => {
+                    const v = parseFloat(e.target.value);
+                    params[paramKey] = v;
+                    valEl.innerText = v;
+                    if (isGeometry) { updateLinkGeometry(); clearTrail(); }
+                });
+            };
+            bind('l1', 'l1', true);
+            bind('l2', 'l2', true);
+            bind('l3', 'l3', true);
+            bind('l4', 'l4', true);
+            bind('speed', 'speed', false);
+            bind('tx', 'traceX', true);
+            bind('ty', 'traceY', true);
+        }
+
+        function animate() {
+            requestAnimationFrame(animate);
+            controls.update();
+            updatePhysics();
+            renderer.render(scene, camera);
+        }
+
+        // ✅ Chrome/Edge 黑屏根本修复：
+        // ResizeObserver 等容器真正有尺寸后才初始化，只触发一次
+        const container = document.getElementById('canvas-container');
+        let inited = false;
+        const initObserver = new ResizeObserver((entries) => {
+            for (const entry of entries) {
+                const { width, height } = entry.contentRect;
+                if (width > 0 && height > 0 && !inited) {
+                    inited = true;
+                    initObserver.disconnect();
+                    init();
+                }
+            }
+        });
+        initObserver.observe(container);
+    </script>
+</body>
+</html>

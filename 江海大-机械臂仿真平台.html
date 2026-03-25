@@ -1,0 +1,813 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>江海大-机械臂仿真平台</title>
+    
+    <!-- 优化1: Tailwind CSS CDN (保持不变，必须同步加载配置) -->
+    <script src="https://cdn.tailwindcss.com"></script>
+
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    colors: {
+                        brand: {
+                            bg: '#f0f2f5',
+                            orange: '#ff9900',
+                            orangeHover: '#e68a00',
+                            dark: '#1a1a1a',
+                            panel: '#ffffff'
+                        }
+                    },
+                    fontFamily: {
+                        sans: ['system-ui', '-apple-system', '"Microsoft YaHei"', '"PingFang SC"', 'sans-serif'],
+                        mono: ['ui-monospace', 'Consolas', 'Menlo', 'Monaco', '"Courier New"', 'monospace'],
+                    },
+                    boxShadow: {
+                        'card': '0 2px 5px rgba(0,0,0,0.05), 0 1px 2px rgba(0,0,0,0.1)',
+                        'glow': '0 0 10px rgba(255, 153, 0, 0.3)'
+                    }
+                }
+            }
+        }
+    </script>
+
+    <!-- 优化2: FontAwesome 异步加载，不阻塞渲染 -->
+    <link rel="preload" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" as="style" onload="this.onload=null;this.rel='stylesheet'">
+    <noscript><link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css"></noscript>
+
+    <!-- 优化3: 预加载 Three.js 资源 -->
+    <link rel="preload" href="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js" as="script">
+    <link rel="preload" href="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js" as="script">
+
+    <style>
+        body { background-color: #f0f2f5; }
+
+        .panel {
+            background: white;
+            border-radius: 0.75rem;
+            border: 1px solid #e5e7eb;
+            box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.05);
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
+        }
+        .panel-header {
+            padding: 0.75rem 1rem;
+            border-bottom: 1px solid #f3f4f6;
+            font-size: 0.85rem;
+            font-weight: 700;
+            letter-spacing: 0.05em;
+            color: #6b7280;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        .panel-header i { color: #9ca3af; }
+
+        input[type=range] { -webkit-appearance: none; width: 100%; background: transparent; }
+        input[type=range]::-webkit-slider-thumb {
+            -webkit-appearance: none;
+            height: 16px; width: 16px;
+            border-radius: 50%;
+            background: #ff9900;
+            cursor: pointer;
+            margin-top: -6px;
+            box-shadow: 0 0 0 2px white, 0 0 0 4px rgba(255, 153, 0, 0.2);
+            transition: transform 0.1s;
+        }
+        input[type=range]::-webkit-slider-thumb:hover { transform: scale(1.1); }
+        input[type=range]::-webkit-slider-runnable-track {
+            width: 100%; height: 4px;
+            cursor: pointer;
+            background: #e5e7eb;
+            border-radius: 2px;
+        }
+
+        .terminal-scroll::-webkit-scrollbar { width: 6px; }
+        .terminal-scroll::-webkit-scrollbar-track { background: #1a1a1a; }
+        .terminal-scroll::-webkit-scrollbar-thumb { background: #374151; border-radius: 3px; }
+
+        @keyframes pulse-red {
+            0% { box-shadow: 0 0 0 0 rgba(239, 68, 68, 0.7); }
+            70% { box-shadow: 0 0 0 6px rgba(239, 68, 68, 0); }
+            100% { box-shadow: 0 0 0 0 rgba(239, 68, 68, 0); }
+        }
+        .animate-record { animation: pulse-red 2s infinite; }
+
+        /* 优化4: 3D容器预设背景色，与场景背景一致，防止黑屏闪烁 */
+        #canvas-container {
+            background-color: #f0f2f5;
+        }
+        #canvas-container canvas {
+            display: block;
+            width: 100% !important;
+            height: 100% !important;
+        }
+
+        /* 优化5: 加载动画 */
+        #loading-overlay {
+            position: absolute;
+            inset: 0;
+            background: #f0f2f5;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            z-index: 10;
+            transition: opacity 0.5s ease;
+        }
+        #loading-overlay.hidden-overlay {
+            opacity: 0;
+            pointer-events: none;
+        }
+        .loader-ring {
+            width: 48px; height: 48px;
+            border: 4px solid #e5e7eb;
+            border-top-color: #ff9900;
+            border-radius: 50%;
+            animation: spin 0.8s linear infinite;
+        }
+        @keyframes spin { to { transform: rotate(360deg); } }
+
+        /* FA图标占位，防止图标闪烁时布局抖动 */
+        .fa-solid, .fa-brands { min-width: 1em; display: inline-block; }
+    </style>
+</head>
+<body class="h-screen flex flex-col text-gray-800 antialiased overflow-hidden">
+
+    <!-- 顶部导航 -->
+    <header class="h-16 bg-white border-b border-gray-200 flex items-center justify-between px-6 shrink-0 z-20 shadow-sm">
+        <div class="flex items-center gap-4">
+            <div class="w-10 h-10 rounded-lg bg-gray-900 flex items-center justify-center text-brand-orange shadow-lg shadow-orange-500/20">
+                <i class="fa-solid fa-robot text-xl"></i>
+            </div>
+            <div>
+                <h1 class="text-lg font-bold tracking-tight text-gray-900 leading-none">江海大-<span class="text-brand-orange">机械臂仿真平台</span></h1>
+                <div class="flex items-center gap-2 mt-1">
+                    <span class="relative flex h-2 w-2">
+                        <span class="animate-ping absolute inline-flex h-full w-full rounded-full bg-blue-400 opacity-75"></span>
+                        <span class="relative inline-flex rounded-full h-2 w-2 bg-blue-500"></span>
+                    </span>
+                    <span class="text-[10px] font-bold text-gray-400 tracking-wider">仿真引擎已就绪</span>
+                </div>
+            </div>
+        </div>
+
+        <div class="hidden md:flex gap-8 items-center bg-gray-50 px-6 py-2 rounded-full border border-gray-100">
+            <div class="flex flex-col items-center">
+                <span class="text-[10px] text-gray-400 font-bold uppercase">系统时间</span>
+                <span class="font-mono font-bold text-sm text-gray-700" id="clock">--:--:--</span>
+            </div>
+            <div class="w-px h-6 bg-gray-200"></div>
+            <div class="flex flex-col items-center">
+                <span class="text-[10px] text-gray-400 font-bold uppercase">版本号</span>
+                <span class="font-mono font-bold text-sm text-gray-700">v2.1.0-PRO</span>
+            </div>
+        </div>
+
+        <div class="flex items-center gap-3">
+            <div class="flex gap-2 text-gray-400 mr-4 border-r border-gray-200 pr-4">
+                <i class="fa-solid fa-wifi" title="连接状态正常"></i>
+                <i class="fa-solid fa-microchip" title="硬件仿真加速开启"></i>
+            </div>
+            <button class="px-4 py-2 text-xs font-bold text-gray-600 bg-gray-100 hover:bg-gray-200 rounded-md transition-colors tracking-wide">系统设置</button>
+            <button onclick="location.reload()" class="px-4 py-2 text-xs font-bold text-white bg-brand-orange hover:bg-brand-orangeHover rounded-md shadow-glow transition-colors tracking-wide flex items-center gap-2">
+                重置场景 <i class="fa-solid fa-rotate-right"></i>
+            </button>
+        </div>
+    </header>
+
+    <!-- 主容器 -->
+    <main class="flex-1 p-4 grid grid-cols-1 md:grid-cols-12 gap-4 min-h-0 bg-brand-bg">
+
+        <!-- 左侧面板 (25%) -->
+        <aside class="col-span-12 lg:col-span-3 flex flex-col gap-4 h-full overflow-y-auto pr-1">
+
+            <!-- 关节监控 -->
+            <div class="panel flex-none">
+                <div class="panel-header">
+                    <span>关节实时监控</span>
+                    <i class="fa-solid fa-gauge-high"></i>
+                </div>
+                <div class="p-4 grid grid-cols-3 gap-2">
+                    <div class="flex flex-col items-center">
+                        <div class="relative w-14 h-14 rounded-full border-4 border-gray-100 flex items-center justify-center">
+                            <svg class="absolute top-0 left-0 w-full h-full transform -rotate-90">
+                                <circle cx="28" cy="28" r="24" stroke="currentColor" stroke-width="4" fill="transparent" class="text-gray-200"/>
+                                <circle id="gauge-circle-j1" cx="28" cy="28" r="24" stroke="currentColor" stroke-width="4" fill="transparent" class="text-brand-orange transition-all duration-300 ease-out" stroke-dasharray="150" stroke-dashoffset="75" stroke-linecap="round"/>
+                            </svg>
+                            <span id="gauge-text-j1" class="font-mono font-bold text-[10px]">0°</span>
+                        </div>
+                        <span class="text-[9px] text-gray-500 mt-1 font-medium">J1 基座</span>
+                    </div>
+                    <div class="flex flex-col items-center">
+                        <div class="relative w-14 h-14 rounded-full border-4 border-gray-100 flex items-center justify-center">
+                            <svg class="absolute top-0 left-0 w-full h-full transform -rotate-90">
+                                <circle cx="28" cy="28" r="24" stroke="currentColor" stroke-width="4" fill="transparent" class="text-gray-200"/>
+                                <circle id="gauge-circle-j2" cx="28" cy="28" r="24" stroke="currentColor" stroke-width="4" fill="transparent" class="text-brand-orange transition-all duration-300 ease-out" stroke-dasharray="150" stroke-dashoffset="75" stroke-linecap="round"/>
+                            </svg>
+                            <span id="gauge-text-j2" class="font-mono font-bold text-[10px]">0°</span>
+                        </div>
+                        <span class="text-[9px] text-gray-500 mt-1 font-medium">J2 肩部</span>
+                    </div>
+                    <div class="flex flex-col items-center">
+                        <div class="relative w-14 h-14 rounded-full border-4 border-gray-100 flex items-center justify-center">
+                            <svg class="absolute top-0 left-0 w-full h-full transform -rotate-90">
+                                <circle cx="28" cy="28" r="24" stroke="currentColor" stroke-width="4" fill="transparent" class="text-gray-200"/>
+                                <circle id="gauge-circle-j3" cx="28" cy="28" r="24" stroke="currentColor" stroke-width="4" fill="transparent" class="text-brand-orange transition-all duration-300 ease-out" stroke-dasharray="150" stroke-dashoffset="75" stroke-linecap="round"/>
+                            </svg>
+                            <span id="gauge-text-j3" class="font-mono font-bold text-[10px]">0°</span>
+                        </div>
+                        <span class="text-[9px] text-gray-500 mt-1 font-medium">J3 肘部</span>
+                    </div>
+                </div>
+            </div>
+
+            <!-- 末端负载分析 -->
+            <div class="panel flex-none h-40">
+                <div class="panel-header">
+                    <span>末端力矩分析</span>
+                    <i class="fa-solid fa-weight-hanging"></i>
+                </div>
+                <div class="p-4 flex-1 flex flex-col justify-end relative">
+                    <div class="flex items-end justify-between h-full gap-2 px-2 border-b border-l border-gray-200 pb-1" id="force-bars">
+                        <div class="w-full bg-orange-200 rounded-t h-[30%] transition-all duration-500"></div>
+                        <div class="w-full bg-orange-300 rounded-t h-[50%] transition-all duration-500"></div>
+                        <div class="w-full bg-brand-orange rounded-t h-[80%] shadow-[0_0_10px_rgba(255,153,0,0.4)] transition-all duration-300"></div>
+                        <div class="w-full bg-orange-300 rounded-t h-[45%] transition-all duration-500"></div>
+                        <div class="w-full bg-orange-200 rounded-t h-[60%] transition-all duration-500"></div>
+                    </div>
+                    <div class="absolute top-4 left-4">
+                        <h2 class="text-2xl font-mono font-bold text-gray-800"><span id="force-val">0.0</span> <span class="text-sm text-gray-400 font-sans">N</span></h2>
+                    </div>
+                </div>
+            </div>
+
+            <!-- 手动操控面板 -->
+            <div class="panel flex-1">
+                <div class="panel-header">
+                    <span>手动示教控制</span>
+                    <i class="fa-solid fa-sliders"></i>
+                </div>
+                <div class="p-5 space-y-6 flex-1 overflow-y-auto">
+                    <div>
+                        <div class="flex justify-between mb-1">
+                            <label class="text-xs font-bold text-gray-500">关节 1 (旋转)</label>
+                            <span id="text-j1" class="text-xs font-mono font-bold text-brand-orange">50%</span>
+                        </div>
+                        <input type="range" id="slider-j1" min="0" max="100" value="50" class="w-full">
+                    </div>
+                    <div>
+                        <div class="flex justify-between mb-1">
+                            <label class="text-xs font-bold text-gray-500">关节 2 (肩部)</label>
+                            <span id="text-j2" class="text-xs font-mono font-bold text-brand-orange">50%</span>
+                        </div>
+                        <input type="range" id="slider-j2" min="0" max="100" value="50" class="w-full">
+                    </div>
+                    <div>
+                        <div class="flex justify-between mb-1">
+                            <label class="text-xs font-bold text-gray-500">关节 3 (肘部)</label>
+                            <span id="text-j3" class="text-xs font-mono font-bold text-brand-orange">50%</span>
+                        </div>
+                        <input type="range" id="slider-j3" min="0" max="100" value="50" class="w-full">
+                    </div>
+                    <div class="pt-4 border-t border-gray-100">
+                        <button id="btn-claw" class="w-full py-2.5 bg-gray-100 hover:bg-gray-200 text-gray-700 font-bold rounded-lg text-xs transition-all flex items-center justify-center gap-2 border border-gray-300 active:scale-95">
+                            <i class="fa-solid fa-hand-rock"></i> 切换夹爪状态
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </aside>
+
+        <!-- 中间 3D 视窗 (50%) -->
+        <section class="col-span-12 lg:col-span-6 flex flex-col h-full">
+            <div class="panel h-full relative border-0 ring-1 ring-gray-200">
+                <div class="absolute top-4 left-4 z-10 bg-white/90 backdrop-blur-sm border border-gray-200 px-3 py-1.5 rounded shadow-sm flex items-center gap-2 pointer-events-none">
+                    <span class="h-2 w-2 rounded-full bg-brand-orange"></span>
+                    <span class="text-xs font-bold text-gray-600 tracking-wide">3D 实时渲染视窗</span>
+                </div>
+                <!-- 优化6: 加载遮罩，Three.js初始化完成后淡出 -->
+                <div id="loading-overlay">
+                    <div class="loader-ring mb-4"></div>
+                    <p class="text-xs font-bold text-gray-400 tracking-widest">正在初始化仿真引擎...</p>
+                </div>
+                <div id="canvas-container" class="w-full h-full cursor-move relative overflow-hidden"></div>
+            </div>
+        </section>
+
+        <!-- 右侧面板 (25%) -->
+        <aside class="col-span-12 lg:col-span-3 flex flex-col gap-4 h-full overflow-y-auto pl-1">
+
+            <!-- 运动曲线 -->
+            <div class="panel h-48">
+                <div class="panel-header">
+                    <span>速度运动曲线</span>
+                    <i class="fa-solid fa-chart-line"></i>
+                </div>
+                <div class="p-4 flex flex-col h-full">
+                    <div class="flex justify-between items-end mb-2">
+                        <div>
+                            <span id="velocity-val" class="text-3xl font-mono font-bold text-gray-800">0.00</span>
+                            <span class="text-xs font-bold text-gray-400">m/s</span>
+                        </div>
+                        <div class="text-right">
+                            <div class="text-[10px] text-gray-400 uppercase font-bold">峰值: 1.25</div>
+                        </div>
+                    </div>
+                    <div class="flex-1 w-full relative overflow-hidden">
+                        <svg viewBox="0 0 100 40" preserveAspectRatio="none" class="w-full h-full drop-shadow-sm">
+                            <path id="velocity-graph" d="M0,35 L100,35" fill="none" stroke="#ff9900" stroke-width="2" vector-effect="non-scaling-stroke"/>
+                        </svg>
+                    </div>
+                </div>
+            </div>
+
+            <!-- 示教录制系统 -->
+            <div class="panel">
+                <div class="panel-header">
+                    <span>动作示教录制</span>
+                    <i class="fa-solid fa-video"></i>
+                </div>
+                <div class="p-5">
+                    <div class="flex flex-col items-center mb-6">
+                        <div id="record-timer" class="text-3xl font-mono font-bold text-gray-800 mb-1">00:00.00</div>
+                        <div id="record-status-text" class="text-[10px] font-bold text-gray-400 uppercase tracking-widest">等待录制</div>
+                    </div>
+                    <div class="flex justify-center gap-4 mb-6">
+                        <button id="btn-record-start" class="w-12 h-12 rounded-full bg-white border-2 border-gray-100 flex items-center justify-center text-red-500 hover:bg-red-50 transition-all shadow-sm active:scale-95 group">
+                            <div class="w-4 h-4 bg-red-500 rounded-full group-[.recording]:animate-pulse group-[.recording]:rounded-sm"></div>
+                        </button>
+                        <button id="btn-record-stop" disabled class="w-12 h-12 rounded-full bg-white border-2 border-gray-100 flex items-center justify-center text-gray-400 hover:text-gray-600 hover:bg-gray-50 transition-all shadow-sm active:scale-95 disabled:opacity-30 disabled:cursor-not-allowed">
+                            <i class="fa-solid fa-stop text-xl"></i>
+                        </button>
+                        <button id="btn-record-play" disabled class="w-12 h-12 rounded-full bg-brand-orange flex items-center justify-center text-white hover:bg-brand-orangeHover transition-all shadow-glow active:scale-95 disabled:opacity-30 disabled:cursor-not-allowed">
+                            <i class="fa-solid fa-play text-xl ml-1"></i>
+                        </button>
+                    </div>
+                    <div class="w-full bg-gray-100 h-1.5 rounded-full overflow-hidden mb-2">
+                        <div id="playback-progress" class="h-full bg-brand-orange w-0 transition-all duration-300"></div>
+                    </div>
+                    <div class="flex justify-between text-[10px] text-gray-400 font-bold uppercase">
+                        <span>回放进度</span>
+                        <span id="recorded-frames-count">已录制: 0 帧</span>
+                    </div>
+                </div>
+            </div>
+
+            <!-- 系统日志 -->
+            <div class="panel flex-1 min-h-[150px] bg-gray-900 border-gray-800 flex flex-col">
+                <div class="panel-header bg-gray-800 border-gray-700">
+                    <span class="text-gray-300">系统内核日志</span>
+                    <div class="flex gap-1">
+                        <div class="w-2 h-2 rounded-full bg-red-500"></div>
+                        <div class="w-2 h-2 rounded-full bg-yellow-500"></div>
+                        <div class="w-2 h-2 rounded-full bg-green-500"></div>
+                    </div>
+                </div>
+                <div id="terminal-logs" class="p-3 font-mono text-[10px] text-green-400 overflow-y-auto h-full terminal-scroll space-y-1 flex-1">
+                    <div class="opacity-50">>> 江海大机械臂内核启动... [完成]</div>
+                    <div class="opacity-50">>> 录制存储空间就绪... [空闲]</div>
+                    <div class="text-white">>> 系统已就绪，等待操作。</div>
+                </div>
+            </div>
+        </aside>
+    </main>
+
+    <!-- 优化7: 时钟脚本内联，立即执行，不依赖外部库 -->
+    <script>
+        (function() {
+            function updateClock() {
+                const now = new Date();
+                const el = document.getElementById('clock');
+                if (el) el.innerText = now.toLocaleTimeString('zh-CN', { hour12: false });
+            }
+            setInterval(updateClock, 1000);
+            updateClock();
+        })();
+    </script>
+
+    <!-- 优化8: Three.js 同步加载（必须），但放在 body 末尾减少阻塞 -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
+
+    <script>
+        // 优化9: 用 requestAnimationFrame 替代 DOMContentLoaded
+        // 确保布局已完成绘制，容器尺寸正确
+        function initScene() {
+            const container = document.getElementById('canvas-container');
+            const loadingOverlay = document.getElementById('loading-overlay');
+            // ResizeObserver 已保证此处 container 有真实尺寸
+
+            const scene = new THREE.Scene();
+            scene.background = new THREE.Color(0xf0f2f5);
+            scene.fog = new THREE.Fog(0xf0f2f5, 10, 50);
+
+            const camera = new THREE.PerspectiveCamera(45, container.clientWidth / container.clientHeight, 0.1, 1000);
+            camera.position.set(8, 6, 8);
+
+            // 优化10: 关闭抗锯齿可以提升性能，或根据设备像素比限制
+            const renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: 'high-performance' });
+            // 优化11: 限制最大像素比为2，防止高分屏性能下降
+            renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+            renderer.setSize(container.clientWidth, container.clientHeight);
+            // 优化12: 使用更快的阴影贴图类型
+            renderer.shadowMap.enabled = true;
+            renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+            container.appendChild(renderer.domElement);
+
+            // 优化13: Three.js初始化完成后，淡出loading遮罩
+            loadingOverlay.classList.add('hidden-overlay');
+            setTimeout(() => { loadingOverlay.style.display = 'none'; }, 500);
+
+            const controls = new THREE.OrbitControls(camera, renderer.domElement);
+            controls.enableDamping = true;
+            controls.dampingFactor = 0.05;
+
+            // 灯光
+            const ambientLight = new THREE.AmbientLight(0xffffff, 0.6);
+            scene.add(ambientLight);
+            const dirLight = new THREE.DirectionalLight(0xffffff, 0.8);
+            dirLight.position.set(5, 10, 7);
+            dirLight.castShadow = true;
+            // 优化14: 减小阴影贴图尺寸提升性能
+            dirLight.shadow.mapSize.width = 1024;
+            dirLight.shadow.mapSize.height = 1024;
+            scene.add(dirLight);
+
+            // 地面网格
+            const gridHelper = new THREE.GridHelper(20, 20, 0x9ca3af, 0xd1d5db);
+            scene.add(gridHelper);
+
+            // 地面接收阴影
+            const floorGeo = new THREE.PlaneGeometry(20, 20);
+            const floorMat = new THREE.ShadowMaterial({ opacity: 0.08 });
+            const floor = new THREE.Mesh(floorGeo, floorMat);
+            floor.rotation.x = -Math.PI / 2;
+            floor.receiveShadow = true;
+            scene.add(floor);
+
+            // 机械臂材质
+            const greyMat = new THREE.MeshPhongMaterial({ color: 0x475569 });
+            const orangeMat = new THREE.MeshPhongMaterial({ color: 0xff9900 });
+            const jointMat = new THREE.MeshPhongMaterial({ color: 0x333333 });
+
+            const robotBaseGroup = new THREE.Group();
+            scene.add(robotBaseGroup);
+
+            // 基座
+            const baseMesh = new THREE.Mesh(new THREE.CylinderGeometry(1, 1.2, 0.5, 32), greyMat);
+            baseMesh.position.y = 0.25;
+            baseMesh.castShadow = true;
+            robotBaseGroup.add(baseMesh);
+
+            // 关节 1
+            const shoulderPivot = new THREE.Group();
+            shoulderPivot.position.y = 0.5;
+            robotBaseGroup.add(shoulderPivot);
+
+            const j1Mesh = new THREE.Mesh(new THREE.CylinderGeometry(0.8, 0.8, 0.4, 32), orangeMat);
+            j1Mesh.position.y = 0.2;
+            j1Mesh.castShadow = true;
+            shoulderPivot.add(j1Mesh);
+
+            const shoulderStrMesh = new THREE.Mesh(new THREE.BoxGeometry(0.8, 1.2, 0.8), greyMat);
+            shoulderStrMesh.position.y = 0.8;
+            shoulderStrMesh.castShadow = true;
+            shoulderPivot.add(shoulderStrMesh);
+
+            // 关节 2
+            const arm1Pivot = new THREE.Group();
+            arm1Pivot.position.set(0, 1.2, 0);
+            shoulderPivot.add(arm1Pivot);
+
+            const j2Mesh = new THREE.Mesh(new THREE.CylinderGeometry(0.4, 0.4, 1, 32), jointMat);
+            j2Mesh.rotation.z = Math.PI / 2;
+            arm1Pivot.add(j2Mesh);
+
+            const arm1Mesh = new THREE.Mesh(new THREE.BoxGeometry(0.6, 2.5, 0.6), orangeMat);
+            arm1Mesh.position.y = 1.25;
+            arm1Mesh.castShadow = true;
+            arm1Pivot.add(arm1Mesh);
+
+            // 关节 3
+            const arm2Pivot = new THREE.Group();
+            arm2Pivot.position.set(0, 2.5, 0);
+            arm1Pivot.add(arm2Pivot);
+
+            const j3Mesh = j2Mesh.clone();
+            arm2Pivot.add(j3Mesh);
+
+            const arm2Mesh = new THREE.Mesh(new THREE.BoxGeometry(0.5, 2, 0.5), greyMat);
+            arm2Mesh.position.y = 1;
+            arm2Mesh.castShadow = true;
+            arm2Pivot.add(arm2Mesh);
+
+            // 夹爪
+            const clawPivot = new THREE.Group();
+            clawPivot.position.set(0, 2, 0);
+            arm2Pivot.add(clawPivot);
+            const wrist = new THREE.Mesh(new THREE.BoxGeometry(0.4, 0.2, 0.4), jointMat);
+            wrist.position.y = 0.1;
+            clawPivot.add(wrist);
+            const f1 = new THREE.Mesh(new THREE.BoxGeometry(0.1, 0.4, 0.1), orangeMat);
+            f1.position.set(0.15, 0.4, 0);
+            clawPivot.add(f1);
+            const f2 = f1.clone();
+            f2.position.set(-0.15, 0.4, 0);
+            clawPivot.add(f2);
+
+            // 抓取物体
+            const pickableObjects = [];
+            let heldObject = null;
+
+            function createBox(x, z, color) {
+                const geo = new THREE.BoxGeometry(0.5, 0.5, 0.5);
+                const mat = new THREE.MeshPhongMaterial({ color });
+                const box = new THREE.Mesh(geo, mat);
+                box.position.set(x, 0.25, z);
+                box.castShadow = true;
+                scene.add(box);
+                pickableObjects.push(box);
+                return box;
+            }
+
+            createBox(2.5, 2, 0x3b82f6);
+            createBox(-2.5, 3, 0xef4444);
+            createBox(0, -3.5, 0x10b981);
+
+            // DOM 引用
+            const s1 = document.getElementById('slider-j1');
+            const s2 = document.getElementById('slider-j2');
+            const s3 = document.getElementById('slider-j3');
+            const btnClaw = document.getElementById('btn-claw');
+            const gText1 = document.getElementById('gauge-text-j1');
+            const gText2 = document.getElementById('gauge-text-j2');
+            const gText3 = document.getElementById('gauge-text-j3');
+            const gCircle1 = document.getElementById('gauge-circle-j1');
+            const gCircle2 = document.getElementById('gauge-circle-j2');
+            const gCircle3 = document.getElementById('gauge-circle-j3');
+            const terminal = document.getElementById('terminal-logs');
+            const velVal = document.getElementById('velocity-val');
+            const velGraph = document.getElementById('velocity-graph');
+            const forceVal = document.getElementById('force-val');
+            const forceBars = document.getElementById('force-bars').children;
+            const btnRecStart = document.getElementById('btn-record-start');
+            const btnRecStop = document.getElementById('btn-record-stop');
+            const btnRecPlay = document.getElementById('btn-record-play');
+            const timerText = document.getElementById('record-timer');
+            const statusText = document.getElementById('record-status-text');
+            const playbackProgress = document.getElementById('playback-progress');
+            const framesText = document.getElementById('recorded-frames-count');
+
+            let isMoving = false;
+            let moveTimeout;
+            let graphPoints = new Array(20).fill(20);
+            let isClawClosed = false;
+            let isRecording = false;
+            let isPlaying = false;
+            let recordedFrames = [];
+            let playbackIndex = 0;
+            let startTime = 0;
+            let timerInterval = null;
+
+            const mapRange = (val, inMin, inMax, outMin, outMax) =>
+                (val - inMin) * (outMax - outMin) / (inMax - inMin) + outMin;
+
+            const log = (msg, color = 'text-white') => {
+                const div = document.createElement('div');
+                div.className = `${color} border-l-2 border-brand-orange pl-2`;
+                div.innerText = `>> ${new Date().toLocaleTimeString('zh-CN')} : ${msg}`;
+                terminal.appendChild(div);
+                terminal.scrollTop = terminal.scrollHeight;
+            };
+
+            const updateRobotPose = () => {
+                const v1 = parseInt(s1.value);
+                const v2 = parseInt(s2.value);
+                const v3 = parseInt(s3.value);
+
+                const ang1_deg = Math.round(mapRange(v1, 0, 100, -180, 180));
+                const ang2_deg = Math.round(mapRange(v2, 0, 100, -45, 90));
+                const ang3_deg = Math.round(mapRange(v3, 0, 100, -90, 90));
+
+                shoulderPivot.rotation.y = -THREE.MathUtils.degToRad(ang1_deg);
+                arm1Pivot.rotation.x = THREE.MathUtils.degToRad(ang2_deg);
+                arm2Pivot.rotation.x = THREE.MathUtils.degToRad(ang3_deg);
+
+                document.getElementById('text-j1').innerText = `${v1}%`;
+                document.getElementById('text-j2').innerText = `${v2}%`;
+                document.getElementById('text-j3').innerText = `${v3}%`;
+                gText1.innerText = `${ang1_deg}°`;
+                gText2.innerText = `${ang2_deg}°`;
+                gText3.innerText = `${ang3_deg}°`;
+
+                gCircle1.style.strokeDashoffset = 150 - (v1 / 100) * 150;
+                gCircle2.style.strokeDashoffset = 150 - (v2 / 100) * 150;
+                gCircle3.style.strokeDashoffset = 150 - (v3 / 100) * 150;
+
+                isMoving = true;
+                clearTimeout(moveTimeout);
+                moveTimeout = setTimeout(() => { isMoving = false; }, 200);
+            };
+
+            [s1, s2, s3].forEach(slider => slider.addEventListener('input', updateRobotPose));
+
+            const toggleClaw = (suppressLog = false) => {
+                const targetX = isClawClosed ? 0.06 : 0.15;
+                f1.position.x = targetX;
+                f2.position.x = -targetX;
+
+                if (isClawClosed) {
+                    let minDist = Infinity;
+                    let nearest = null;
+                    const clawWorldPos = new THREE.Vector3();
+                    clawPivot.getWorldPosition(clawWorldPos);
+
+                    pickableObjects.forEach(obj => {
+                        const objWorldPos = new THREE.Vector3();
+                        obj.getWorldPosition(objWorldPos);
+                        const d = clawWorldPos.distanceTo(objWorldPos);
+                        if (d < 1.2 && d < minDist) { minDist = d; nearest = obj; }
+                    });
+
+                    if (nearest) {
+                        heldObject = nearest;
+                        clawPivot.attach(heldObject);
+                        if (!suppressLog) log("成功抓取实验方块", 'text-green-400');
+                    } else {
+                        if (!suppressLog) log("夹爪闭合", 'text-gray-500');
+                    }
+                } else {
+                    if (heldObject) {
+                        scene.attach(heldObject);
+                        heldObject = null;
+                        if (!suppressLog) log("物体已释放", 'text-brand-orange');
+                    } else {
+                        if (!suppressLog) log("夹爪已张开", 'text-gray-400');
+                    }
+                }
+            };
+
+            btnClaw.addEventListener('click', () => {
+                if (isPlaying) return;
+                isClawClosed = !isClawClosed;
+                toggleClaw();
+            });
+
+            const formatTime = (ms) => {
+                const totalSeconds = Math.floor(ms / 1000);
+                const minutes = Math.floor(totalSeconds / 60).toString().padStart(2, '0');
+                const seconds = (totalSeconds % 60).toString().padStart(2, '0');
+                const centis = Math.floor((ms % 1000) / 10).toString().padStart(2, '0');
+                return `${minutes}:${seconds}.${centis}`;
+            };
+
+            btnRecStart.addEventListener('click', () => {
+                if (isPlaying) return;
+                isRecording = true;
+                recordedFrames = [];
+                startTime = Date.now();
+                btnRecStart.classList.add('recording');
+                btnRecStart.disabled = true;
+                btnRecStop.disabled = false;
+                btnRecPlay.disabled = true;
+                statusText.innerText = "正在录制动作...";
+                statusText.classList.add('text-red-500');
+                log("开始录制示教动作...", 'text-red-400');
+                timerInterval = setInterval(() => {
+                    timerText.innerText = formatTime(Date.now() - startTime);
+                }, 40);
+            });
+
+            btnRecStop.addEventListener('click', () => {
+                if (isRecording) {
+                    isRecording = false;
+                    clearInterval(timerInterval);
+                    btnRecStart.classList.remove('recording');
+                    btnRecStart.disabled = false;
+                    btnRecStop.disabled = true;
+                    btnRecPlay.disabled = recordedFrames.length === 0;
+                    statusText.innerText = "录制已保存";
+                    statusText.classList.remove('text-red-500');
+                    framesText.innerText = `已录制: ${recordedFrames.length} 帧`;
+                    log(`录制完成，共计 ${recordedFrames.length} 帧。`, 'text-green-400');
+                } else if (isPlaying) {
+                    isPlaying = false;
+                    btnRecPlay.disabled = false;
+                    btnRecStop.disabled = true;
+                    statusText.innerText = "播放已停止";
+                    log("回放演示手动停止。", 'text-gray-400');
+                }
+            });
+
+            btnRecPlay.addEventListener('click', () => {
+                if (recordedFrames.length === 0 || isRecording) return;
+                isPlaying = true;
+                playbackIndex = 0;
+                btnRecPlay.disabled = true;
+                btnRecStop.disabled = false;
+                statusText.innerText = "正在演示动作...";
+                log("开始演示录制动作序列。", 'text-brand-orange');
+            });
+
+            updateRobotPose();
+
+            // 优化15: 节流力矩条更新，减少DOM操作频率
+            let lastForceUpdate = 0;
+            function animate(timestamp) {
+                requestAnimationFrame(animate);
+
+                if (isRecording) {
+                    recordedFrames.push({ s1: s1.value, s2: s2.value, s3: s3.value, claw: isClawClosed });
+                }
+
+                if (isPlaying) {
+                    if (playbackIndex < recordedFrames.length) {
+                        const frame = recordedFrames[playbackIndex];
+                        s1.value = frame.s1;
+                        s2.value = frame.s2;
+                        s3.value = frame.s3;
+                        if (isClawClosed !== frame.claw) {
+                            isClawClosed = frame.claw;
+                            toggleClaw(true);
+                        }
+                        updateRobotPose();
+                        const progress = (playbackIndex / (recordedFrames.length - 1)) * 100;
+                        playbackProgress.style.width = `${progress}%`;
+                        playbackIndex++;
+                    } else {
+                        isPlaying = false;
+                        btnRecPlay.disabled = false;
+                        btnRecStop.disabled = true;
+                        playbackProgress.style.width = '100%';
+                        statusText.innerText = "回放完成";
+                        log("动作演示序列播放完毕。", 'text-green-400');
+                    }
+                }
+
+                // 优化16: 力矩条更新限制在 ~30fps，减少不必要的 DOM 重排
+                if (timestamp - lastForceUpdate > 33) {
+                    lastForceUpdate = timestamp;
+                    if (isMoving) {
+                        const vel = (Math.random() * 0.8 + 0.2).toFixed(2);
+                        velVal.innerText = vel;
+                        forceVal.innerText = (12 + Math.random() * 5).toFixed(1);
+                        graphPoints.shift();
+                        graphPoints.push(20 + Math.random() * 15 * (Math.random() > 0.5 ? 1 : -1));
+                        Array.from(forceBars).forEach(bar => {
+                            bar.style.height = (20 + Math.random() * 80) + "%";
+                        });
+                    } else {
+                        velVal.innerText = "0.00";
+                        forceVal.innerText = "0.0";
+                        graphPoints.shift();
+                        graphPoints.push(20);
+                    }
+
+                    let d = "M0," + graphPoints[0];
+                    for (let i = 1; i < graphPoints.length; i++) {
+                        d += ` L${i * (100 / (graphPoints.length - 1))},${graphPoints[i]}`;
+                    }
+                    velGraph.setAttribute('d', d);
+                }
+
+                controls.update();
+                renderer.render(scene, camera);
+            }
+            animate(0);
+
+            // 优化17: 用 ResizeObserver 代替 window resize，响应更精准
+            const ro = new ResizeObserver(() => {
+                if (container.clientWidth > 0 && container.clientHeight > 0) {
+                    camera.aspect = container.clientWidth / container.clientHeight;
+                    camera.updateProjectionMatrix();
+                    renderer.setSize(container.clientWidth, container.clientHeight);
+                }
+            });
+            ro.observe(container);
+        }
+
+        // ✅ Chrome/Edge 黑屏根本修复：
+        // CSS Grid 布局在 Chrome 中比 RAF 更晚计算完成，
+        // 所以不能用 RAF 或 DOMContentLoaded 判断尺寸。
+        // 用 ResizeObserver 监听容器，等它真正有宽高时才初始化，且只初始化一次。
+        const container = document.getElementById('canvas-container');
+        let inited = false;
+        const initObserver = new ResizeObserver((entries) => {
+            for (const entry of entries) {
+                const { width, height } = entry.contentRect;
+                if (width > 0 && height > 0 && !inited) {
+                    inited = true;
+                    initObserver.disconnect(); // 只触发一次，立即断开
+                    initScene();
+                }
+            }
+        });
+        initObserver.observe(container);
+    </script>
+</body>
+</html>
